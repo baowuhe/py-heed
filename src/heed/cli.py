@@ -113,6 +113,12 @@ def add_audio_subcommand(subparsers):
         default="best",
         help="Audio quality (default: best)",
     )
+    parser.add_argument(
+        "--json",
+        "-j",
+        action="store_true",
+        help="Output progress in JSON format",
+    )
 
 
 def parse_args(argv=None):
@@ -337,19 +343,61 @@ def main_audio(args):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Converting {args.input} to {args.format}...")
+    start_time = time.time()
+
+    # Progress tracking variables
+    progress_data = {
+        "elapsed": 0,
+        "total": 0,
+        "percent": 0,
+    }
+
+    def progress_callback(elapsed: float, total: float):
+        progress_data["elapsed"] = elapsed
+        progress_data["total"] = total
+        if total > 0:
+            progress_data["percent"] = min(100, int(elapsed / total * 100))
+        else:
+            progress_data["percent"] = 0
+
+        if not args.json:
+            print(f"\r{format_timestamp(elapsed)} / {format_timestamp(total)} ({progress_data['percent']}%)", end="", flush=True)
+
+    if not args.json:
+        print(f"Converting {args.input} to {args.format}...")
 
     try:
-        convert_video_to_audio(
+        duration = convert_video_to_audio(
             args.input,
             output_path,
             device=args.device,
             quality=args.quality,
+            progress_callback=progress_callback,
         )
-        print(f"Audio saved to: {output_path}")
+
+        if not args.json:
+            print()  # New line after progress
+
+        if args.json:
+            elapsed_time = time.time() - start_time
+            print(json.dumps({
+                "type": "complete",
+                "output": output_path,
+                "duration": f"{duration:.1f}s",
+                "elapsed_time": f"{elapsed_time:.1f}s",
+            }))
+        else:
+            print(f"Audio saved to: {output_path}")
+
         return 0
     except Exception as e:
-        print(f"Error during conversion: {e}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({
+                "type": "error",
+                "error": str(e),
+            }))
+        else:
+            print(f"Error during conversion: {e}", file=sys.stderr)
         return 1
 
 

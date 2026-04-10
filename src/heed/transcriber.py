@@ -148,7 +148,8 @@ def convert_video_to_audio(
     audio_path: str,
     device: str = "gpu",
     quality: str = "best",
-) -> str:
+    progress_callback: Optional[Callable[[float, float], None]] = None,
+) -> float:
     """Convert video file to audio.
 
     Args:
@@ -156,10 +157,13 @@ def convert_video_to_audio(
         audio_path: Path to output audio file
         device: Device to use: "gpu" or "cpu" (default: "gpu")
         quality: Audio quality: "best", "high", "medium", "low" (default: "best")
+        progress_callback: Optional callback(elapsed, total) for progress updates
 
     Returns:
-        Path to the output audio file
+        Duration of the audio in seconds
     """
+    import re
+
     # Audio codec mapping for different formats
     codec_map = {
         "mp3": "libmp3lame",
@@ -188,6 +192,11 @@ def convert_video_to_audio(
     codec = codec_map.get(output_format, "libmp3lame")
     bitrate = quality_bitrates.get(output_format, {}).get(quality)
 
+    # Get duration first for progress reporting
+    probe = ffmpeg.probe(video_path)
+    video_stream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
+    duration = float(probe.get("format", {}).get("duration", video_stream.get("duration", 0) if video_stream else 0))
+
     stream = ffmpeg.input(video_path)
 
     # Build output options
@@ -200,5 +209,27 @@ def convert_video_to_audio(
         output_options["b:a"] = bitrate
 
     stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
-    ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
-    return audio_path
+
+    # Run with progress if callback provided
+    if progress_callback:
+        # Add -progress pipe:1 to get progress output
+        stream = stream.global_args("-progress", "pipe:1")
+
+        # Run and capture output
+        stdout, stderr = ffmpeg.run(stream, overwrite_output=True, pipe=True, capture_stderr=True)
+
+        # Parse progress from stdout
+        # ffmpeg outputs progress in format: out_time_ms=<timestamp>
+        time_pattern = re.compile(r'out_time_ms=(\d+)')
+
+        for line in stdout.decode('utf-8', errors='ignore').split('\n'):
+            match = time_pattern.search(line)
+            if match:
+                time_ms = int(match.group(1))
+                elapsed = time_ms / 1000000.0  # Convert to seconds
+                progress_callback(elapsed, duration)
+
+        return duration
+    else:
+        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        return duration
