@@ -163,6 +163,7 @@ def convert_video_to_audio(
         Duration of the audio in seconds
     """
     import re
+    import subprocess
 
     # Audio codec mapping for different formats
     codec_map = {
@@ -197,39 +198,51 @@ def convert_video_to_audio(
     video_stream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
     duration = float(probe.get("format", {}).get("duration", video_stream.get("duration", 0) if video_stream else 0))
 
-    stream = ffmpeg.input(video_path)
+    # Build ffmpeg command
+    cmd = ["ffmpeg", "-y", "-i", video_path, "-progress", "pipe:1"]
 
-    # Build output options
-    output_options = {
-        "acodec": codec,
-    }
+    # Add codec
+    cmd.extend(["-acodec", codec])
 
-    # Add bitrate for formats that support it
+    # Add bitrate if applicable
     if bitrate:
-        output_options["b:a"] = bitrate
+        cmd.extend(["-b:a", bitrate])
 
-    stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
+    # Add output path
+    cmd.append(audio_path)
 
-    # Run with progress if callback provided
     if progress_callback:
-        # Add -progress pipe:1 to get progress output
-        stream = stream.global_args("-progress", "pipe:1")
+        # Use subprocess to read progress in real-time
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=False,
+        )
 
-        # Run and capture output
-        stdout, stderr = ffmpeg.run(stream, overwrite_output=True, pipe=True, capture_stderr=True)
-
-        # Parse progress from stdout
-        # ffmpeg outputs progress in format: out_time_ms=<timestamp>
+        # Parse progress from stdout line by line
         time_pattern = re.compile(r'out_time_ms=(\d+)')
 
-        for line in stdout.decode('utf-8', errors='ignore').split('\n'):
-            match = time_pattern.search(line)
+        for line in process.stdout:
+            line_str = line.decode('utf-8', errors='ignore')
+            match = time_pattern.search(line_str)
             if match:
                 time_ms = int(match.group(1))
                 elapsed = time_ms / 1000000.0  # Convert to seconds
                 progress_callback(elapsed, duration)
 
+        process.wait()
+
+        if process.returncode != 0:
+            stderr = process.stderr.read().decode('utf-8', errors='ignore')
+            raise RuntimeError(f"ffmpeg failed: {stderr}")
+
         return duration
     else:
+        stream = ffmpeg.input(video_path)
+        output_options = {"acodec": codec}
+        if bitrate:
+            output_options["b:a"] = bitrate
+        stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
         ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
         return duration
