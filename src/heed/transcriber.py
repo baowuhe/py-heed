@@ -141,3 +141,64 @@ def get_audio_info(audio_path: str) -> dict:
             "channels": int(audio_stream.get("channels", 1)),
         }
     return {"duration": 0, "sample_rate": 16000, "channels": 1}
+
+
+def convert_video_to_audio(
+    video_path: str,
+    audio_path: str,
+    device: str = "gpu",
+    quality: str = "best",
+) -> str:
+    """Convert video file to audio.
+
+    Args:
+        video_path: Path to input video file
+        audio_path: Path to output audio file
+        device: Device to use: "gpu" or "cpu" (default: "gpu")
+        quality: Audio quality: "best", "high", "medium", "low" (default: "best")
+
+    Returns:
+        Path to the output audio file
+    """
+    # Audio codec mapping for different formats
+    codec_map = {
+        "mp3": "libmp3lame",
+        "aac": "aac",
+        "m4a": "aac",
+        "flac": "flac",
+        "ogg": "libvorbis",
+        "wav": "pcm_s16le",
+        "wma": "wmav2",
+    }
+
+    # Quality presets (bitrate for mp3, general for others)
+    # For mp3: best=320k, high=192k, medium=128k, low=96k
+    # For aac/m4a: best=192k, high=128k, medium=96k, low=64k
+    quality_bitrates = {
+        "mp3": {"best": "320k", "high": "192k", "medium": "128k", "low": "96k"},
+        "aac": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
+        "m4a": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
+        "ogg": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
+        "wma": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
+        "flac": None,  # Lossless, no bitrate needed
+        "wav": None,   # Lossless, no bitrate needed
+    }
+
+    output_format = os.path.splitext(audio_path)[1].lstrip(".").lower()
+    codec = codec_map.get(output_format, "libmp3lame")
+    bitrate = quality_bitrates.get(output_format, {}).get(quality)
+
+    stream = ffmpeg.input(video_path)
+
+    # Build output options
+    output_options = {
+        "acodec": codec,
+    }
+
+    # Add bitrate for formats that support it
+    if bitrate:
+        output_options["b:a"] = bitrate
+
+    stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
+    ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+    return audio_path
