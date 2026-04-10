@@ -16,36 +16,73 @@ uvx py-heed --help
 uv tool install -e .
 ```
 
-安装后可执行 `py-head` 命令。
+安装后可执行 `py-heed` 命令。
 
 ## 使用方法
 
+### 查看版本
+
 ```bash
-# 基本用法，默认输出 SRT 格式
-py-head video.mp4 -m /path/to/model
-
-# 指定模型路径
-py-head video.mp4 --model /path/to/model
-
-# 输出 TXT 格式
-py-head video.mp4 -m /path/to/model -f txt
-
-# 同时输出 SRT 和 TXT
-py-head video.mp4 -m /path/to/model -f all
-
-# 指定输出目录
-py-head video.mp4 -m /path/to/model -o ./output/
-
-# 指定输出文件路径
-py-head video.mp4 -m /path/to/model -o ./output/result.srt
-
-# 指定设备（默认 auto，自动检测 GPU）
-py-head video.mp4 -m /path/to/model -d cuda
-py-head video.mp4 -m /path/to/model -d cpu
-py-head video.mp4 -m /path/to/model -d auto
+py-heed --version
 ```
 
-## 参数说明
+### 音视频转文字 (text 子命令)
+
+```bash
+# 基本用法，默认输出 SRT 格式
+py-heed text video.mp4 -m /path/to/model
+
+# 指定模型路径
+py-heed text video.mp4 --model /path/to/model
+
+# 输出 TXT 格式
+py-heed text video.mp4 -m /path/to/model -f txt
+
+# 同时输出 SRT 和 TXT
+py-heed text video.mp4 -m /path/to/model -f all
+
+# 指定输出目录
+py-heed text video.mp4 -m /path/to/model -o ./output/
+
+# 指定输出文件路径
+py-heed text video.mp4 -m /path/to/model -o ./output/result.srt
+
+# 指定设备（默认 auto，自动检测 GPU）
+py-heed text video.mp4 -m /path/to/model -d cuda
+py-heed text video.mp4 -m /path/to/model -d cpu
+py-heed text video.mp4 -m /path/to/model -d auto
+
+# JSON 输出（用于程序处理）
+py-heed text video.mp4 -m /path/to/model -j
+```
+
+### 视频转音频 (audio 子命令)
+
+```bash
+# 基本用法，默认转为 MP3
+py-heed audio video.mp4
+
+# 指定输出格式
+py-heed audio video.mp4 -f wav
+py-heed audio video.mp4 --format flac
+
+# 指定输出目录
+py-heed audio video.mp4 -o ./audio/
+
+# 指定输出文件路径
+py-heed audio video.mp4 -o ./audio/video.mp3
+
+# 指定音质（默认 best）
+py-heed audio video.mp4 -q high
+
+# 指定设备（默认 gpu）
+py-heed audio video.mp4 -d cpu
+
+# JSON 输出（用于程序处理）
+py-heed audio video.mp4 -j
+```
+
+## text 子命令参数说明
 
 | 参数 | 短参数 | 说明 | 默认值 |
 |------|--------|------|--------|
@@ -54,6 +91,18 @@ py-head video.mp4 -m /path/to/model -d auto
 | `--format` / `-f` | 输出格式 | `srt`, `txt`, `all` | `srt` |
 | `--output` / `-o` | 输出路径 | 输出目录或文件路径 | 当前目录 |
 | `--device` / `-d` | 计算设备 | `auto`, `cuda`, `cpu` | `auto` |
+| `--json` / `-j` | JSON输出 | 输出 JSON 格式结果 | `false` |
+
+## audio 子命令参数说明
+
+| 参数 | 短参数 | 说明 | 默认值 |
+|------|--------|------|--------|
+| `INPUT` | - | 视频文件路径 | 必需 |
+| `--output` / `-o` | 输出路径 | 输出目录或文件路径 | 当前目录 |
+| `--format` / `-f` | 输出格式 | `mp3`, `wav`, `m4a`, `flac`, `ogg`, `aac`, `wma` | `mp3` |
+| `--device` / `-d` | 计算设备 | `gpu`, `cpu` | `gpu` |
+| `--quality` / `-q` | 音质 | `best`, `high`, `medium`, `low` | `best` |
+| `--json` / `-j` | JSON输出 | 输出 JSON 格式结果 | `false` |
 
 ## 输出格式
 
@@ -80,23 +129,26 @@ SubRip 字幕格式，包含时间戳：
 [00:00:04 - 00:00:07] 这是第二段语音
 ```
 
-## 输出路径规则
+## 进度显示
 
-- `--output` 指定**目录**时：输出文件名为源文件名（不含扩展名）+ `.srt` 或 `.txt`
-- `--output` 指定**文件**时：必须指定单一格式（`srt` 或 `txt`），直接输出到该文件
-- 目录不存在时自动创建
+所有命令都支持同行进度显示：
+
+```
+00:01:23 / 00:05:00 (41%)
+```
+
+使用 `--json` 参数可获取 JSON 格式的完整结果。
 
 ## 设备选择
 
-- `auto`：自动检测系统是否有 GPU，有则使用 GPU（cuda），否则使用 CPU
-- `cuda`：强制使用 GPU（需要 CUDA 环境）
-- `cpu`：强制使用 CPU
+- **text 子命令**：`auto` 自动检测 GPU，`cuda` 强制 GPU，`cpu` 强制 CPU
+- **audio 子命令**：`gpu` 使用 GPU 加速（默认），`cpu` 使用 CPU
 
 ## 依赖
 
 - Python >= 3.9
 - ffmpeg（系统已安装）
-- faster-whisper 模型（需另行下载）
+- faster-whisper 模型（需另行下载 for text 子命令）
 
 ## License
 
