@@ -1,11 +1,17 @@
 """Core transcription logic using faster-whisper."""
 
 import os
+import subprocess
 import tempfile
 from typing import List, Optional, Callable
 
 import ffmpeg
 from faster_whisper import WhisperModel
+
+
+class FFmpegError(Exception):
+    """Raised when ffmpeg fails."""
+    pass
 
 
 def extract_audio(video_path: str, audio_path: Optional[str] = None) -> str:
@@ -17,6 +23,9 @@ def extract_audio(video_path: str, audio_path: Optional[str] = None) -> str:
 
     Returns:
         Path to the extracted audio file
+
+    Raises:
+        FFmpegError: If ffmpeg fails to extract audio
     """
     if audio_path is None:
         audio_path = tempfile.mktemp(suffix=".wav")
@@ -30,7 +39,10 @@ def extract_audio(video_path: str, audio_path: Optional[str] = None) -> str:
         ac=1,
         format="wav",
     )
-    ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+    try:
+        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+    except ffmpeg.Error as e:
+        raise FFmpegError(f"Failed to extract audio: {e.stderr.decode() if e.stderr else str(e)}")
     return audio_path
 
 
@@ -59,7 +71,6 @@ def transcribe(
     compute_type = "float16" if device == "cuda" else "int8"
 
     model = WhisperModel(model_path, device=device, compute_type=compute_type)
-
     try:
         segments_generator, info = model.transcribe(audio_path, **kwargs)
 
@@ -76,6 +87,7 @@ def transcribe(
         if "cublas" in str(e).lower() or "cuda" in str(e).lower():
             if device == "cuda":
                 # Fall back to CPU if CUDA fails
+                model.close()
                 device = "cpu"
                 compute_type = "int8"
                 model = WhisperModel(model_path, device=device, compute_type=compute_type)
@@ -93,6 +105,8 @@ def transcribe(
                 raise
         else:
             raise
+    finally:
+        model.close()
 
 
 def is_cuda_available() -> bool:
@@ -130,7 +144,10 @@ def get_audio_info(audio_path: str) -> dict:
     Returns:
         Dict with duration and other info
     """
-    probe = ffmpeg.probe(audio_path)
+    try:
+        probe = ffmpeg.probe(audio_path)
+    except ffmpeg.Error as e:
+        raise FFmpegError(f"Failed to probe audio: {e.stderr.decode() if e.stderr else str(e)}")
     audio_stream = next(
         (s for s in probe["streams"] if s["codec_type"] == "audio"), None
     )
@@ -163,7 +180,6 @@ def convert_video_to_audio(
         Duration of the audio in seconds
     """
     import re
-    import subprocess
 
     # Audio codec mapping for different formats
     codec_map = {
@@ -194,7 +210,10 @@ def convert_video_to_audio(
     bitrate = quality_bitrates.get(output_format, {}).get(quality)
 
     # Get duration first for progress reporting
-    probe = ffmpeg.probe(video_path)
+    try:
+        probe = ffmpeg.probe(video_path)
+    except ffmpeg.Error as e:
+        raise FFmpegError(f"Failed to probe video: {e.stderr.decode() if e.stderr else str(e)}")
     video_stream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
     duration = float(probe.get("format", {}).get("duration", video_stream.get("duration", 0) if video_stream else 0))
 
@@ -220,22 +239,25 @@ def convert_video_to_audio(
             universal_newlines=False,
         )
 
-        # Parse progress from stdout line by line
-        time_pattern = re.compile(r'out_time_ms=(\d+)')
+        try:
+            # Parse progress from stdout line by line
+            time_pattern = re.compile(r'out_time_ms=(\d+)')
 
-        for line in process.stdout:
-            line_str = line.decode('utf-8', errors='ignore')
-            match = time_pattern.search(line_str)
-            if match:
-                time_ms = int(match.group(1))
-                elapsed = time_ms / 1000000.0  # Convert to seconds
-                progress_callback(elapsed, duration)
-
-        process.wait()
+            for line in process.stdout:
+                line_str = line.decode('utf-8', errors='ignore')
+                match = time_pattern.search(line_str)
+                if match:
+                    time_ms = int(match.group(1))
+                    elapsed = time_ms / 1000000.0  # Convert to seconds
+                    progress_callback(elapsed, duration)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
 
         if process.returncode != 0:
             stderr = process.stderr.read().decode('utf-8', errors='ignore')
-            raise RuntimeError(f"ffmpeg failed: {stderr}")
+            raise FFmpegError(f"ffmpeg failed: {stderr}")
 
         return duration
     else:
@@ -244,5 +266,8 @@ def convert_video_to_audio(
         if bitrate:
             output_options["b:a"] = bitrate
         stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
-        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        try:
+            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        except ffmpeg.Error as e:
+            raise FFmpegError(f"ffmpeg conversion failed: {e.stderr.decode() if e.stderr else str(e)}")
         return duration
