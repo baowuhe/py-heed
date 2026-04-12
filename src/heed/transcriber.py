@@ -296,3 +296,90 @@ def convert_video_to_audio(
                 f"ffmpeg conversion failed: {e.stderr.decode() if e.stderr else str(e)}"
             )
         return duration
+
+
+def slice_media(
+    input_path: str,
+    output_dir: str,
+    num_parts: int,
+    device: str = "auto",
+    progress_callback: Optional[Callable[[float, float], None]] = None,
+) -> list[str]:
+    """Split a video or audio file into equal parts.
+
+    Args:
+        input_path: Path to input video or audio file
+        output_dir: Directory to save output slices
+        num_parts: Number of equal parts to split into (must be > 1)
+        device: Device to use: "auto", "cuda", "cpu" (default: "auto")
+        progress_callback: Optional callback(elapsed, total) for progress updates
+
+    Returns:
+        List of paths to the output slice files
+
+    Raises:
+        FFmpegError: If ffmpeg fails
+        ValueError: If num_parts <= 1
+    """
+    if num_parts <= 1:
+        raise ValueError("num_parts must be greater than 1")
+
+    input_ext = os.path.splitext(input_path)[1].lower()
+    input_basename = os.path.splitext(os.path.basename(input_path))[0]
+
+    # Get duration
+    try:
+        probe = ffmpeg.probe(input_path)
+    except ffmpeg.Error as e:
+        raise FFmpegError(
+            f"Failed to probe input: {e.stderr.decode() if e.stderr else str(e)}"
+        )
+
+    # Get duration from format or streams
+    duration = None
+    video_stream = next(
+        (s for s in probe["streams"] if s["codec_type"] == "video"), None
+    )
+    audio_stream = next(
+        (s for s in probe["streams"] if s["codec_type"] == "audio"), None
+    )
+    if video_stream:
+        duration = float(video_stream.get("duration", 0))
+    if duration is None or duration == 0:
+        duration = float(probe.get("format", {}).get("duration", 0))
+    if audio_stream and (duration is None or duration == 0):
+        duration = float(audio_stream.get("duration", 0))
+    if duration is None or duration == 0:
+        raise FFmpegError("Could not determine duration of input file")
+
+    part_duration = duration / num_parts
+    width = len(str(num_parts))
+    output_paths = []
+
+    for i in range(num_parts):
+        start_time = i * part_duration
+        output_path = os.path.join(
+            output_dir, f"{input_basename}_{str(i + 1).zfill(width)}{input_ext}"
+        )
+        output_paths.append(output_path)
+
+        stream = ffmpeg.input(input_path, ss=start_time)
+        stream = ffmpeg.output(
+            stream,
+            output_path,
+            t=part_duration,
+            c="copy",  # Copy codecs, no re-encoding
+        )
+        try:
+            ffmpeg.run(
+                stream, overwrite_output=True, capture_stdout=True, capture_stderr=True
+            )
+        except ffmpeg.Error as e:
+            raise FFmpegError(
+                f"Failed to slice part {i + 1}: {e.stderr.decode() if e.stderr else str(e)}"
+            )
+
+        if progress_callback:
+            progress_callback((i + 1) * part_duration, duration)
+
+    return output_paths

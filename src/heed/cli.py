@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 
-from .transcriber import extract_audio, transcribe, is_cuda_available, convert_video_to_audio
+from .transcriber import extract_audio, transcribe, is_cuda_available, convert_video_to_audio, slice_media
 from .formatter import write_srt, write_txt
 
 
@@ -121,6 +121,45 @@ def add_audio_subcommand(subparsers):
     )
 
 
+def add_slice_subcommand(subparsers):
+    """Add the slice subcommand for splitting video/audio into parts."""
+    parser = subparsers.add_parser(
+        "slice",
+        help="Split video or audio into equal parts",
+        description="Split video or audio files into equal parts without re-encoding",
+    )
+    parser.add_argument(
+        "input",
+        metavar="INPUT",
+        help="Path to video or audio file",
+    )
+    parser.add_argument(
+        "num_parts",
+        metavar="NUM_PARTS",
+        type=int,
+        help="Number of equal parts to split into (must be > 1)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output directory (default: same directory as input)",
+    )
+    parser.add_argument(
+        "--device",
+        "-d",
+        choices=["auto", "cuda", "cpu"],
+        default="auto",
+        help="Device to use: auto, cuda, cpu (default: auto)",
+    )
+    parser.add_argument(
+        "--json",
+        "-j",
+        action="store_true",
+        help="Output progress in JSON format",
+    )
+
+
 def parse_args(argv=None):
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -138,6 +177,7 @@ def parse_args(argv=None):
 
     add_text_subcommand(subparsers)
     add_audio_subcommand(subparsers)
+    add_slice_subcommand(subparsers)
 
     args = parser.parse_args(argv)
 
@@ -236,6 +276,8 @@ def main(argv=None):
         return main_text(args)
     elif args.command == "audio":
         return main_audio(args)
+    elif args.command == "slice":
+        return main_slice(args)
     else:
         return 0
 
@@ -398,6 +440,85 @@ def main_audio(args):
             }))
         else:
             print(f"Error during conversion: {e}", file=sys.stderr)
+        return 1
+
+
+def main_slice(args):
+    """Main entry point for slice subcommand."""
+    if not os.path.exists(args.input):
+        print(f"Error: Input file not found: {args.input}", file=sys.stderr)
+        return 1
+
+    if args.num_parts <= 1:
+        print(f"Error: num_parts must be greater than 1, got {args.num_parts}", file=sys.stderr)
+        return 1
+
+    # Default output directory is the input file's directory
+    if args.output is None:
+        output_dir = os.path.dirname(args.input) or os.getcwd()
+    else:
+        output_dir = args.output
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    start_time = time.time()
+
+    # Progress tracking variables
+    progress_data = {
+        "elapsed": 0,
+        "total": 0,
+        "percent": 0,
+    }
+
+    def progress_callback(elapsed: float, total: float):
+        progress_data["elapsed"] = elapsed
+        progress_data["total"] = total
+        if total > 0:
+            progress_data["percent"] = min(100, int(elapsed / total * 100))
+        else:
+            progress_data["percent"] = 0
+
+        if not args.json:
+            print(f"\rSlicing: {progress_data['percent']}%", end="", flush=True)
+
+    if not args.json:
+        print(f"Slicing {args.input} into {args.num_parts} parts...")
+
+    try:
+        output_paths = slice_media(
+            args.input,
+            output_dir,
+            args.num_parts,
+            device=args.device,
+            progress_callback=progress_callback,
+        )
+
+        if not args.json:
+            print()  # New line after progress
+
+        if args.json:
+            elapsed_time = time.time() - start_time
+            print(json.dumps({
+                "type": "complete",
+                "outputs": output_paths,
+                "num_parts": len(output_paths),
+                "elapsed_time": f"{elapsed_time:.1f}s",
+            }))
+        else:
+            print(f"Created {len(output_paths)} slices:")
+            for path in output_paths:
+                print(f"  {path}")
+
+        return 0
+    except Exception as e:
+        if args.json:
+            print(json.dumps({
+                "type": "error",
+                "error": str(e),
+            }))
+        else:
+            print(f"Error during slicing: {e}", file=sys.stderr)
         return 1
 
 
