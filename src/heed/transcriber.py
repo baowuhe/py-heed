@@ -11,6 +11,7 @@ from faster_whisper import WhisperModel
 
 class FFmpegError(Exception):
     """Raised when ffmpeg fails."""
+
     pass
 
 
@@ -40,9 +41,13 @@ def extract_audio(video_path: str, audio_path: Optional[str] = None) -> str:
         format="wav",
     )
     try:
-        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        ffmpeg.run(
+            stream, overwrite_output=True, capture_stdout=True, capture_stderr=True
+        )
     except ffmpeg.Error as e:
-        raise FFmpegError(f"Failed to extract audio: {e.stderr.decode() if e.stderr else str(e)}")
+        raise FFmpegError(
+            f"Failed to extract audio: {e.stderr.decode() if e.stderr else str(e)}"
+        )
     return audio_path
 
 
@@ -51,7 +56,7 @@ def transcribe(
     model_path: str,
     device: str = "auto",
     progress_callback: Optional[Callable[[float, float], None]] = None,
-    **kwargs
+    **kwargs,
 ) -> tuple[List, float]:
     """Transcribe audio file using faster-whisper.
 
@@ -90,7 +95,9 @@ def transcribe(
                 model.close()
                 device = "cpu"
                 compute_type = "int8"
-                model = WhisperModel(model_path, device=device, compute_type=compute_type)
+                model = WhisperModel(
+                    model_path, device=device, compute_type=compute_type
+                )
                 segments_generator, info = model.transcribe(audio_path, **kwargs)
 
                 # Collect segments and report progress
@@ -106,7 +113,7 @@ def transcribe(
         else:
             raise
     finally:
-        model.close()
+        pass
 
 
 def is_cuda_available() -> bool:
@@ -114,23 +121,25 @@ def is_cuda_available() -> bool:
     # Check via torch if available
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         pass
     # Check via ctranslate2 (used by faster-whisper)
     try:
         import ctranslate2
+
         # ctranslate2 has a method to get device map
         return "cuda" in str(ctranslate2.get_available_devices())
     except (ImportError, AttributeError):
         pass
     # Fallback: check for nvidia-smi
     import shutil
+
     if shutil.which("nvidia-smi"):
         import subprocess
-        result = subprocess.run(
-            ["nvidia-smi"], capture_output=True, timeout=5
-        )
+
+        result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=5)
         return result.returncode == 0
     return False
 
@@ -147,7 +156,9 @@ def get_audio_info(audio_path: str) -> dict:
     try:
         probe = ffmpeg.probe(audio_path)
     except ffmpeg.Error as e:
-        raise FFmpegError(f"Failed to probe audio: {e.stderr.decode() if e.stderr else str(e)}")
+        raise FFmpegError(
+            f"Failed to probe audio: {e.stderr.decode() if e.stderr else str(e)}"
+        )
     audio_stream = next(
         (s for s in probe["streams"] if s["codec_type"] == "audio"), None
     )
@@ -202,7 +213,7 @@ def convert_video_to_audio(
         "ogg": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
         "wma": {"best": "192k", "high": "128k", "medium": "96k", "low": "64k"},
         "flac": None,  # Lossless, no bitrate needed
-        "wav": None,   # Lossless, no bitrate needed
+        "wav": None,  # Lossless, no bitrate needed
     }
 
     output_format = os.path.splitext(audio_path)[1].lstrip(".").lower()
@@ -213,9 +224,17 @@ def convert_video_to_audio(
     try:
         probe = ffmpeg.probe(video_path)
     except ffmpeg.Error as e:
-        raise FFmpegError(f"Failed to probe video: {e.stderr.decode() if e.stderr else str(e)}")
-    video_stream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
-    duration = float(probe.get("format", {}).get("duration", video_stream.get("duration", 0) if video_stream else 0))
+        raise FFmpegError(
+            f"Failed to probe video: {e.stderr.decode() if e.stderr else str(e)}"
+        )
+    video_stream = next(
+        (s for s in probe["streams"] if s["codec_type"] == "video"), None
+    )
+    duration = float(
+        probe.get("format", {}).get(
+            "duration", video_stream.get("duration", 0) if video_stream else 0
+        )
+    )
 
     # Build ffmpeg command
     cmd = ["ffmpeg", "-y", "-i", video_path, "-progress", "pipe:1"]
@@ -241,10 +260,10 @@ def convert_video_to_audio(
 
         try:
             # Parse progress from stdout line by line
-            time_pattern = re.compile(r'out_time_ms=(\d+)')
+            time_pattern = re.compile(r"out_time_ms=(\d+)")
 
             for line in process.stdout:
-                line_str = line.decode('utf-8', errors='ignore')
+                line_str = line.decode("utf-8", errors="ignore")
                 match = time_pattern.search(line_str)
                 if match:
                     time_ms = int(match.group(1))
@@ -256,7 +275,7 @@ def convert_video_to_audio(
                 process.wait(timeout=5)
 
         if process.returncode != 0:
-            stderr = process.stderr.read().decode('utf-8', errors='ignore')
+            stderr = process.stderr.read().decode("utf-8", errors="ignore")
             raise FFmpegError(f"ffmpeg failed: {stderr}")
 
         return duration
@@ -265,9 +284,15 @@ def convert_video_to_audio(
         output_options = {"acodec": codec}
         if bitrate:
             output_options["b:a"] = bitrate
-        stream = ffmpeg.output(stream, audio_path, format=output_format, **output_options)
+        stream = ffmpeg.output(
+            stream, audio_path, format=output_format, **output_options
+        )
         try:
-            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            ffmpeg.run(
+                stream, overwrite_output=True, capture_stdout=True, capture_stderr=True
+            )
         except ffmpeg.Error as e:
-            raise FFmpegError(f"ffmpeg conversion failed: {e.stderr.decode() if e.stderr else str(e)}")
+            raise FFmpegError(
+                f"ffmpeg conversion failed: {e.stderr.decode() if e.stderr else str(e)}"
+            )
         return duration
