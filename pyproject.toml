@@ -1,6 +1,6 @@
 [project]
 name = "py-heed"
-version = "0.2.2"
+version = "0.2.4"
 description = "Audio/Video to text transcription tool using faster-whisper"
 readme = "README.md"
 requires-python = ">=3.9"
