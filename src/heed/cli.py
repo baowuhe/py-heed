@@ -109,9 +109,9 @@ def add_audio_subcommand(subparsers):
     parser.add_argument(
         "--quality",
         "-q",
-        choices=["best", "high", "medium", "low"],
-        default="best",
-        help="Audio quality (default: best)",
+        choices=["auto", "best", "high", "medium", "low"],
+        default="auto",
+        help="Audio quality: auto preserves source quality, best/high/medium/low use fixed bitrates (default: auto)",
     )
     parser.add_argument(
         "--json",

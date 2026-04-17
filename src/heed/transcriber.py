@@ -218,9 +218,8 @@ def convert_video_to_audio(
 
     output_format = os.path.splitext(audio_path)[1].lstrip(".").lower()
     codec = codec_map.get(output_format, "libmp3lame")
-    bitrate = quality_bitrates.get(output_format, {}).get(quality)
 
-    # Get duration first for progress reporting
+    # Get duration and audio stream info for progress reporting
     try:
         probe = ffmpeg.probe(video_path)
     except ffmpeg.Error as e:
@@ -230,11 +229,43 @@ def convert_video_to_audio(
     video_stream = next(
         (s for s in probe["streams"] if s["codec_type"] == "video"), None
     )
+    audio_stream = next(
+        (s for s in probe["streams"] if s["codec_type"] == "audio"), None
+    )
     duration = float(
         probe.get("format", {}).get(
             "duration", video_stream.get("duration", 0) if video_stream else 0
         )
     )
+
+    # Determine bitrate: for "auto" use source bitrate, otherwise use preset
+    if quality == "auto":
+        source_bitrate = None
+        source_sample_rate = None
+        source_channels = None
+
+        if audio_stream:
+            # Try to get bitrate from audio stream
+            source_bitrate = audio_stream.get("bit_rate")
+            if not source_bitrate:
+                # Try format level bitrate as fallback
+                source_bitrate = probe.get("format", {}).get("bit_rate")
+            source_sample_rate = audio_stream.get("sample_rate")
+            source_channels = audio_stream.get("channels")
+
+        # Use source bitrate if available, otherwise fall back to medium
+        if source_bitrate:
+            bitrate = str(source_bitrate)
+        else:
+            # Fall back to medium quality preset
+            bitrate = quality_bitrates.get(output_format, {}).get("medium")
+        # Keep sample rate and channels for auto mode
+        sample_rate = source_sample_rate
+        channels = source_channels
+    else:
+        bitrate = quality_bitrates.get(output_format, {}).get(quality)
+        sample_rate = None
+        channels = None
 
     # Build ffmpeg command
     cmd = ["ffmpeg", "-y", "-i", video_path, "-progress", "pipe:1"]
@@ -242,9 +273,17 @@ def convert_video_to_audio(
     # Add codec
     cmd.extend(["-acodec", codec])
 
-    # Add bitrate if applicable
+    # Add bitrate if applicable (not for lossless formats)
     if bitrate:
         cmd.extend(["-b:a", bitrate])
+
+    # Add sample rate if available
+    if sample_rate:
+        cmd.extend(["-ar", str(sample_rate)])
+
+    # Add channel count if available
+    if channels:
+        cmd.extend(["-ac", str(channels)])
 
     # Add output path
     cmd.append(audio_path)
@@ -359,7 +398,7 @@ def slice_media(
     for i in range(num_parts):
         start_time = i * part_duration
         output_path = os.path.join(
-            output_dir, f"{input_basename}_{str(i + 1).zfill(width)}{input_ext}"
+            output_dir, f"{str(i + 1).zfill(width)}_{input_basename}{input_ext}"
         )
         output_paths.append(output_path)
 
